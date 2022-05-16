@@ -1,6 +1,9 @@
+from copyreg import pickle
 from turtle import distance
 from models.loader import load_model
 from data.dataset import get_flair_loader, get_seg_loader, get_t2_loader, get_t1ce_loader, get_t1_loader
+
+from sklearn.metrics import ndcg_score
 
 import os
 import numpy as np
@@ -90,7 +93,7 @@ models = {
     "seg" : load_model("./models/seg.pth"),
     "t1" : load_model("./models/t1.pth"),
     "t1ce" : load_model("./models/t1ce.pth"),
-    "flair" : load_model("./models/model.pth"),
+    "flair" : load_model("./models/flair.pth"),
     "t2" : load_model("./models/t2.pth")
 }
 # All the dataset for each model
@@ -105,63 +108,93 @@ matrix = {}
 similarities = {}
 candidates = {}
 
-def get_features (model_key):
+number_patient = 200
 
-    for i, x in enumerate (data[model_key]) :
-        result = models[model_key].encode (x)
+ndcg_matrix = np.zeros((1, number_patient))
+
+def get_features (model_key):
+    """
+    Get the 256 features for 
+    """
+
+    result = None
+    arrays = []
+
+    for index, batch in enumerate (data[model_key]) :
+        arrays.append(models[model_key].encode(batch))
+
+    result = torch.cat(tuple(arrays), dim=0)
 
     return result
 
+
 def get_similarity_matrice (model_key) :
 
-    distance_matrix = np.zeros((50, 50))
+    distance_matrix = np.zeros((number_patient, number_patient))
     result = get_features(model_key)
 
-    for patient_1 in range (0, 49) :
-        for patient_2 in range (0, 49) :
-            distance_matrix[patient_1, patient_2] = ((result[patient_1] - result[patient_2])**2).sum(axis=0)
-            
+    for patient_1 in range (0, number_patient) :
+        for patient_2 in range (0, number_patient) :
+            distance_matrix[patient_1, patient_2] = ((result[patient_1] - result[patient_2])**2).sum(axis=0)   
 
     return distance_matrix
 
-def get_most_similar (key_model, number_of_element, patient) :
+def get_most_similar (key_model, patient) :
 
     matrice = matrix[key_model]
-    most_similar_idx = np.argsort(matrice[patient])[:number_of_element]
+    most_similar_idx = np.argsort(matrice[patient])
 
     return most_similar_idx
 
-for key in data :
-    if key != "flair" :
-        matrix[key] = get_similarity_matrice(key)
-        similarities[key] = indexes = get_most_similar (key, number_of_element=7, patient=6)
 
-for i , key in enumerate (data) :
-    if key != "flair" :
-
-        size = len (similarities[key])
-
-        for candidate in similarities[key] :
-            if candidate not in candidates :
-                candidates[candidate] = size-i
-            else :
-                candidates[candidate] += size-i
-
-list_candidates = []
-
-for i in range (6) :
-
-    max_value = 0
-    max_value_key = None
-
-    for candidate in candidates :
-        if candidates[candidate] >= max_value :
-
-            max_value = candidates[candidate]
-            max_value_key = candidate
-
-    list_candidates.append(max_value_key)
-    candidates.pop(max_value_key)
+for h in tqdm (range (number_patient) ):
 
 
-print (list_candidates)
+    for key in data :
+        if key != "" :
+            matrix[key] = get_similarity_matrice(key)
+            similarities[key] = indexes = get_most_similar (key, patient=h)
+
+    for i , key in enumerate (data) :
+        if key != "" :
+
+            size = len (similarities[key])
+
+            for candidate in similarities[key] :
+                if candidate not in candidates :
+                    candidates[candidate] = size-i
+                else :
+                    candidates[candidate] += size-i
+
+    list_candidates = []
+    ponderation_candidate = []
+
+    for i in range (number_patient) :
+
+        max_value = 0
+        max_value_key = None
+
+        for candidate in candidates :
+            if candidates[candidate] >= max_value :
+
+                max_value = candidates[candidate]
+                max_value_key = candidate
+
+            
+        list_candidates.append(max_value_key)
+        ponderation_candidate.append(max_value)
+
+        candidates.pop(max_value_key)
+
+    similarity_for_candidates = []
+
+    ndcg_matrix [0, h] = ndcg_score(np.asarray([list_candidates]), np.asarray([ponderation_candidate]))
+    print (ndcg_matrix[0, h])
+
+    # On calculte le ndcg de la liste à partir de ça
+
+
+with open ("./data/late_fusion.pickle", "wb") as file :
+    pickle.dump(ndcg_matrix ,file)
+
+print (ndcg_matrix)    

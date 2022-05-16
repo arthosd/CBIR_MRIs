@@ -24,6 +24,44 @@ test_patient_list = test_patient_list[: len(test_patient_list)]
 slices_per_patient = 96
 num_slices_selected = 3
 
+class AEDataset(Dataset):
+    def __init__(self, mode, transform=None):
+        super(AEDataset, self).__init__()
+        self.mode = mode
+        self.transform = transform
+        self.patient_list = train_patient_list if mode == 'train' else test_patient_list
+        self.directory = base_directory + mode + '/'
+
+        self.x = []
+        for patient in tqdm(self.patient_list):
+            self.x.append(
+                np.stack([
+                    nib.load(self.directory + patient + '/' + patient + '_best_slices/' + patient + mri_type + '.nii.gz').get_fdata()
+                    for mri_type in ['_flair', '_seg', '_t1', '_t1ce', '_t2']
+                ], axis=-1)
+            )
+        self.x = np.stack(self.x, axis=0)
+
+    def __len__(self):
+        return len(self.patient_list)
+
+    def get_data(self):
+        return self.x
+
+    def __getitem__(self, idx):
+        # pour avori l'idx d'un patient
+        sequence = self.x[idx]
+
+        # standardize the sequence
+        sequence = torch.Tensor(cv.normalize(sequence.transpose(2, 0, 1), None, 0, 1, cv.NORM_MINMAX))
+
+        # on normalise les images
+        if self.transform:
+            sequence = self.transform(sequence)
+            sequence_other = self.transform(sequence_other)
+
+        return sequence
+
 class FlairDataset(Dataset):
     def __init__(self, mode, transform=None):
         super(FlairDataset, self).__init__()
@@ -219,6 +257,13 @@ class T2ceDataset(Dataset):
 
         return sequence
 
+
+def get_ae_loader () :
+
+    test_dataset = AEDataset('test', transform=None)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=True)
+
+    return test_loader
 
 def get_flair_loader () :
 
